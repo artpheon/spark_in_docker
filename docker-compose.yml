@@ -1,0 +1,106 @@
+version: '3'
+networks:
+    datapipeline:
+        driver: bridge
+        ipam:
+            driver: default
+            config:
+                - subnet: "172.18.0.0/16"
+
+services:
+  spark:
+    image: docker.io/bitnami/spark:3
+    container_name: spark_master
+    hostname: spark_master
+    user: root
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - KAFKA_HOST=${KAFKA_HOST}
+      - KAFKA_PORT=${KAFKA_PORT}
+      - TOPIC=${TOPIC}
+      - CASS_TABLE=${CASS_TABLE}
+      - CASS_KEYSPACE=${CASS_KEYSPACE}
+      - CASS_HOST=${CASS_HOST}
+      - CASS_PORT=${CASS_PORT}
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./src/spark:/home
+      - ./spark/conf/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+      - ./spark/jars:/opt/bitnami/spark/ivy:z
+    networks:
+      datapipeline:
+        ipv4_address: 172.18.0.2
+  zookeeper:
+    image: 'bitnami/zookeeper:latest'
+    container_name: zookeeper
+    hostname: zookeeper
+    ports:
+      - '2181:2181'
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      datapipeline:
+        ipv4_address: 172.18.0.3
+  kafka:
+    build:
+      dockerfile: src/kafka/Dockerfile
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - '9092:9092'
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://172.18.0.4:9092 # this was 127.0.0.1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./src/kafka:/home
+    networks:
+      datapipeline:
+        ipv4_address: 172.18.0.4
+  cassandra:
+    build:
+      dockerfile: src/cassandra/Dockerfile
+    container_name: cassandra
+    hostname: cassandra
+    healthcheck:
+      test: bash /home/cassandra_healthcheck.sh
+    ports:
+      - '9042:9042'
+    volumes:
+      - ./src/cassandra:/home
+    networks:
+      datapipeline:
+        ipv4_address: 172.18.0.5
+  app:
+    build:
+      dockerfile: src/app/Dockerfile
+    container_name: app
+    hostname: app
+    stdin_open: true
+    tty: true
+    ports:
+      - '8000:8000'
+    volumes:
+      - ./src/app:/home
+    depends_on:
+      - cassandra
+    environment:
+      - KAFKA_HOST=${KAFKA_HOST}
+      - KAFKA_PORT=${KAFKA_PORT}
+      - TOPIC=${TOPIC}
+      - CASS_TABLE=${CASS_TABLE}
+      - CASS_KEYSPACE=${CASS_KEYSPACE}
+      - CASS_HOST=${CASS_HOST}
+      - CASS_PORT=${CASS_PORT}
+    networks:
+      datapipeline:
+        ipv4_address: 172.18.0.6
